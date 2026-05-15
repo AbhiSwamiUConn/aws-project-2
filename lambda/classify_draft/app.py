@@ -63,6 +63,7 @@ def _rule_based_reasoning(payload):
         "explanation": explanation,
         # keep for downstream steps
         "extracted_text": payload.get("extracted_text", ""),
+        "applicant_email": payload.get("applicant_email", ""),
     }
 
 
@@ -117,6 +118,7 @@ def lambda_handler(event, context):
             "entities": base["entities"],
             "claimed": base["claimed"],
             "extracted_text": base["extracted_text"],
+            "applicant_email": base["applicant_email"],
         }
     except Exception as e:
         print(f"Bedrock call failed, using rule-based reasoning. Error: {e}")

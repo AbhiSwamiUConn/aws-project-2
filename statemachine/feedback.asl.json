@@ -78,7 +78,9 @@
               "recommendation.$": "$.recommendation",
               "explanation.$": "$.explanation",
               "confidence.$": "$.confidence",
-              "credit_score.$": "$.credit_bureau.Payload"
+              "applicant_email.$": "$.applicant_email",
+              "credit_score.$": "$.credit_bureau.Payload.credit_score",
+              "credit_queried_at.$": "$.credit_bureau.Payload.queried_at"
             },
             "Next": "NeedsHumanReview?"
           },
@@ -93,7 +95,7 @@
                   },
                   {
                     "Variable": "$.confidence",
-                    "NumericLessThan": 0.8
+                    "NumericLessThan": ${ConfidenceThreshold}
                   },
                   {
                     "Variable": "$.credit_score",
@@ -117,6 +119,7 @@
                 "credit_score.$": "$.credit_score",
                 "flags.$": "$.flags",
                 "explanation.$": "$.explanation",
+                "applicant_email.$": "$.applicant_email",
                 "final_status": "AUTO_COMPLETED",
                 "review_id": null
               }
@@ -127,6 +130,7 @@
           "CreateHumanReview": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+            "TimeoutSeconds": 604800,
             "Parameters": {
               "FunctionName": "${CreateReviewFunctionArn}",
               "Payload": {
@@ -134,6 +138,7 @@
                 "feedback.$": "$"
               }
             },
+            "ResultPath": "$.review_result",
             "Retry": [
               {
                 "ErrorEquals": [
@@ -153,7 +158,20 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${PersistResultFunctionArn}",
-              "Payload.$": "$"
+              "Payload": {
+                "application_id.$": "$.application_id",
+                "recommendation.$": "$.recommendation",
+                "confidence.$": "$.confidence",
+                "credit_score.$": "$.credit_score",
+                "flags.$": "$.flags",
+                "explanation.$": "$.explanation",
+                "applicant_email.$": "$.applicant_email",
+                "review_id.$": "$.review_result.review_id",
+                "final_status.$": "$.review_result.final_status",
+                "reviewed_at.$": "$.review_result.reviewed_at",
+                "reviewer.$": "$.review_result.reviewer",
+                "notes.$": "$.review_result.notes"
+              }
             },
             "OutputPath": "$.Payload",
             "Next": "NotifyApplicant"

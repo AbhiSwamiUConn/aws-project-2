@@ -59,7 +59,6 @@ Resources:
         - AttributeName: application_id
           KeyType: HASH
 
-  # Extraction: parses input docs & extracts entities (name/address/wages/debts/W2/SSN/home/loan requested)
   ValidateRedactFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -79,7 +78,6 @@ Resources:
                 - comprehend:DetectPiiEntities
               Resource: "*"
 
-  # Intelligent reasoning (Bedrock-ish): compare extracted vs claimed + craft explanation and recommendation
   ClassifyDraftFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -95,7 +93,6 @@ Resources:
                 - bedrock:InvokeModel
               Resource: "*"
 
-  # AgentCore Gateway -> external credit bureau API (stubbed): returns random credit score 440-780
   CreditBureauStubFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -144,7 +141,6 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref ResultsTable
 
-  # Completion: send SES email with final status
   NotifyApplicantFunction:
     Type: AWS::Serverless::Function
     Properties:

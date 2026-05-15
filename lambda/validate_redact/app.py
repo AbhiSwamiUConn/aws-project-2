@@ -1,5 +1,6 @@
-import json
 import csv
+import io
+import json
 import boto3
 import os
 import urllib.parse
@@ -60,7 +61,6 @@ def redact_pii(text, language_code):
         entities = response.get("Entities", [])
         redacted_text = text
 
-        # Replace from end to avoid index shifting
         for entity in sorted(entities, key=lambda x: x["BeginOffset"], reverse=True):
             start = entity["BeginOffset"]
             end = entity["EndOffset"]
@@ -70,32 +70,56 @@ def redact_pii(text, language_code):
 
     except Exception as e:
         print(f"PII detection failed: {e}")
-        return text  # fallback without breaking pipeline
+        return text
+
+
+def normalize_record_keys(record):
+    normalized = {}
+    for key, value in record.items():
+        cleaned_key = str(key).strip()
+        normalized[cleaned_key] = value.strip() if isinstance(value, str) else value
+    return normalized
 
 
 def parse_csv(content):
     records = []
-    reader = csv.DictReader(content.splitlines())
+    reader = csv.DictReader(io.StringIO(content))
     for row in reader:
-        records.append(dict(row))
+        cleaned = normalize_record_keys(dict(row))
+        if any(value not in (None, "") for value in cleaned.values()):
+            records.append(cleaned)
     return records
 
 
 def parse_json(content):
     data = json.loads(content)
-    return data.get("records", [])
+
+    if isinstance(data, list):
+        return [normalize_record_keys(record) for record in data if isinstance(record, dict)]
+
+    if isinstance(data, dict):
+        if isinstance(data.get("records"), list):
+            return [normalize_record_keys(record) for record in data["records"] if isinstance(record, dict)]
+        return [normalize_record_keys(data)]
+
+    raise ValueError("Unsupported JSON payload shape")
 
 
 def load_file_from_s3(bucket, key):
     obj = s3.get_object(Bucket=bucket, Key=key)
     content = obj["Body"].read().decode("utf-8")
+    normalized_key = key.lower()
 
-    if key.endswith(".csv"):
+    if normalized_key.endswith(".csv"):
         return parse_csv(content)
-    elif key.endswith(".json"):
+    if normalized_key.endswith(".json"):
         return parse_json(content)
-    else:
-        raise ValueError("Unsupported file format (expected .json or .csv)")
+
+    stripped = content.lstrip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        return parse_json(content)
+
+    raise ValueError("Unsupported file format (expected .json or .csv)")
 
 
 def quarantine_file(bucket, key, reason):
@@ -118,11 +142,9 @@ def _extract_entities_from_record(record):
     """
     doc_text = record.get("document_text") or record.get("feedback_text") or ""
 
-    # Normalize SSN: keep only last4 if present
     ssn_match = re.search(r"\b(\d{3}-\d{2}-\d{4})\b", doc_text)
     ssn_last4 = ssn_match.group(1)[-4:] if ssn_match else (record.get("ssn_last4") or "")
 
-    # Extremely lightweight heuristics for demo inputs
     entities = {
         "name": record.get("name") or "",
         "address": record.get("address") or "",
@@ -135,9 +157,11 @@ def _extract_entities_from_record(record):
         "ssn_last4": ssn_last4,
     }
 
-    # Copy optional home info fields
     if record.get("home_address"):
         entities["home_address"] = record["home_address"]
+
+    if record.get("applicant_email"):
+        entities["applicant_email"] = record["applicant_email"]
 
     return doc_text, entities
 
@@ -164,6 +188,9 @@ def lambda_handler(event, context):
     """
     print("Received event:", json.dumps(event))
 
+    bucket = None
+    key = None
+
     try:
         bucket = event["detail"]["bucket"]["name"]
         key = urllib.parse.unquote_plus(event["detail"]["object"]["key"])
@@ -172,9 +199,9 @@ def lambda_handler(event, context):
 
     except Exception as e:
         print(f"Failed to load file: {e}")
-        # best-effort quarantine
         try:
-            quarantine_file(bucket, key, str(e))
+            if bucket and key:
+                quarantine_file(bucket, key, str(e))
         except Exception:
             pass
         raise
@@ -190,7 +217,6 @@ def lambda_handler(event, context):
 
             application_id = record.get("application_id") or record.get("feedback_id") or "unknown"
 
-            # "claimed" is the applicant-stated values in the application form (demo)
             claimed = {
                 "annual_wages": entities.get("annual_wages_claimed"),
                 "debts_total": entities.get("debts_total"),
@@ -204,6 +230,9 @@ def lambda_handler(event, context):
                     "extracted_text": redacted_text,
                     "entities": entities,
                     "claimed": claimed,
+                    "applicant_email":  record.get("applicant_email") or entities.get("applicant_email"),
+                    "source_bucket": bucket,
+                    "source_key": key,
                 }
             )
 

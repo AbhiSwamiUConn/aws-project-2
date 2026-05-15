@@ -20,16 +20,6 @@ def to_dynamo_safe(value):
 def lambda_handler(event, context):
     """
     Persist the final recommendation/status for a mortgage application.
-
-    Expected input keys (from state machine):
-      - application_id
-      - final_status
-      - recommendation (optional)
-      - confidence (optional)
-      - credit_score (optional)
-      - flags (optional)
-      - explanation (optional)
-      - review_id (optional)
     """
     now = datetime.now(timezone.utc).isoformat()
 
@@ -44,9 +34,24 @@ def lambda_handler(event, context):
         "flags": event.get("flags") or [],
         "explanation": event.get("explanation") or "",
         "review_id": event.get("review_id"),
+        "reviewed_at": event.get("reviewed_at"),
+        "reviewer": event.get("reviewer"),
+        "notes": event.get("notes"),
+        "applicant_email": event.get("applicant_email"),
         "updated_at": now,
     }
 
     table.put_item(Item=to_dynamo_safe(item))
 
-    return {"ok": True, "application_id": application_id}
+    return {
+        "ok": True,
+        "application_id": application_id,
+        "final_status": item["final_status"],
+        "recommendation": item["recommendation"],
+        "confidence": item["confidence"],
+        "credit_score": item["credit_score"],
+        "flags": item["flags"],
+        "explanation": item["explanation"],
+        "review_id": item["review_id"],
+        "applicant_email": item["applicant_email"],
+    }

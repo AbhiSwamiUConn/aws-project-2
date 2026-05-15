@@ -8,6 +8,40 @@ Flow:
 3) Intelligent reasoning: Bedrock-style reasoning step compares extracted vs application and calls a stub credit bureau API (random score 440-780)
 4) Completion: Step Functions persists final recommendation and sends SES email notification
 
+Accepted input formats:
+- CSV with one row per application record
+- JSON object with a top-level `records` array
+- JSON array of record objects
+- Single JSON object representing one application
+
+Supported record fields:
+- `application_id`
+- `language`
+- `name`
+- `address`
+- `annual_wages_claimed`
+- `tax_return_wages`
+- `w2_wages`
+- `debts_total`
+- `home_value`
+- `loan_requested`
+- `document_text`
+- `applicant_email`
+- optional `ssn_last4`, `home_address`
+
+Human review behavior:
+- Applications route to human review when:
+  - the reasoning step returns `HUMAN_REVIEW`
+  - confidence is below the configured threshold
+  - credit score is below 580
+- Human review uses a Step Functions task token callback pattern
+- Review completion must happen before the state machine wait task expires
+
+SES requirements:
+- `NotificationFromEmail` must be a verified SES identity in the deployment region
+- In SES sandbox, recipients may also need to be verified
+- Replace the default placeholder emails before deployment
+
 Prereqs:
 - Install AWS CLI: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
 - Configure AWS credentials (e.g., `aws configure`)
@@ -30,7 +64,8 @@ aws lambda invoke \
   --payload '{
     "review_id": "insert_id_here",
     "decision": "APPROVED",
-    "reviewer": "insert_email_address"
+    "reviewer": "insert_email_address",
+    "notes": "optional notes"
   }' \
   response.json
 
