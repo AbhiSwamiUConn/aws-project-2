@@ -1,0 +1,273 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Mortgage application reviewer pipeline (S3 -> Step Functions -> extraction/reasoning -> SES)
+
+Parameters:
+  BedrockModelId:
+    Type: String
+    Default: openai.gpt-oss-20b-1:0
+  ConfidenceThreshold:
+    Type: Number
+    Default: 0.80
+  NotificationFromEmail:
+    Type: String
+    Default: "no-reply@example.com"
+  NotificationToEmail:
+    Type: String
+    Default: "applicant@example.com"
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 60
+    MemorySize: 512
+    Tracing: Active
+
+Resources:
+  ApplicationBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+  QuarantineBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+  ReviewsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: review_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: review_id
+          KeyType: HASH
+
+  ResultsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: application_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: application_id
+          KeyType: HASH
+
+  # Extraction: parses input docs & extracts entities (name/address/wages/debts/W2/SSN/home/loan requested)
+  ValidateRedactFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/validate_redact/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          QUARANTINE_BUCKET: !Ref QuarantineBucket
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref ApplicationBucket
+        - S3WritePolicy:
+            BucketName: !Ref QuarantineBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - comprehend:DetectPiiEntities
+              Resource: "*"
+
+  # Intelligent reasoning (Bedrock-ish): compare extracted vs claimed + craft explanation and recommendation
+  ClassifyDraftFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/classify_draft/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+
+  # AgentCore Gateway -> external credit bureau API (stubbed): returns random credit score 440-780
+  CreditBureauStubFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/credit_bureau_stub/
+      Handler: app.lambda_handler
+
+  CreateReviewFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/create_review/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          REVIEWS_TABLE: !Ref ReviewsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ReviewsTable
+
+  SubmitReviewFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/submit_review/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          REVIEWS_TABLE: !Ref ReviewsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ReviewsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+              Resource: "*"
+
+  PersistResultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/persist_result/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          RESULTS_TABLE: !Ref ResultsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ResultsTable
+
+  # Completion: send SES email with final status
+  NotifyApplicantFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/notify_applicant/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          FROM_EMAIL: !Ref NotificationFromEmail
+          DEFAULT_TO_EMAIL: !Ref NotificationToEmail
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+
+  MortgageStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokePipelineLambdas
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ValidateRedactFunction.Arn
+                  - !GetAtt ClassifyDraftFunction.Arn
+                  - !GetAtt CreditBureauStubFunction.Arn
+                  - !GetAtt CreateReviewFunction.Arn
+                  - !GetAtt PersistResultFunction.Arn
+                  - !GetAtt NotifyApplicantFunction.Arn
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+
+  MortgageStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: mortgage-application-review-workflow
+      Role: !GetAtt MortgageStateMachineRole.Arn
+      DefinitionUri: statemachine/feedback.asl.json
+      DefinitionSubstitutions:
+        ValidateRedactFunctionArn: !GetAtt ValidateRedactFunction.Arn
+        ClassifyDraftFunctionArn: !GetAtt ClassifyDraftFunction.Arn
+        CreditBureauStubFunctionArn: !GetAtt CreditBureauStubFunction.Arn
+        CreateReviewFunctionArn: !GetAtt CreateReviewFunction.Arn
+        PersistResultFunctionArn: !GetAtt PersistResultFunction.Arn
+        NotifyApplicantFunctionArn: !GetAtt NotifyApplicantFunction.Arn
+        ConfidenceThreshold: !Ref ConfidenceThreshold
+
+  EventBridgeInvokeSfnRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartStateMachine
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !GetAtt MortgageStateMachine.Arn
+
+  S3ObjectCreatedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Start mortgage review workflow when a new application file lands in incoming/
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref ApplicationBucket
+          object:
+            key:
+              - prefix: incoming/
+      Targets:
+        - Arn: !GetAtt MortgageStateMachine.Arn
+          Id: MortgageStateMachineTarget
+          RoleArn: !GetAtt EventBridgeInvokeSfnRole.Arn
+
+Outputs:
+  ApplicationBucketName:
+    Value: !Ref ApplicationBucket
+  QuarantineBucketName:
+    Value: !Ref QuarantineBucket
+  ReviewsTableName:
+    Value: !Ref ReviewsTable
+  ResultsTableName:
+    Value: !Ref ResultsTable
+  MortgageStateMachineArn:
+    Value: !GetAtt MortgageStateMachine.Arn

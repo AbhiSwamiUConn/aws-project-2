@@ -1,0 +1,17 @@
+{
+  "records": [
+    {
+      "application_id": "app-human-002",
+      "language": "en",
+      "name": "Jamie Applicant",
+      "address": "101 Main St, Hartford, CT 06103",
+      "annual_wages_claimed": "120000",
+      "tax_return_wages": "95000",
+      "w2_wages": "98000",
+      "debts_total": "22000",
+      "home_value": "410000",
+      "loan_requested": "350000",
+      "document_text": "Applicant: Jamie Applicant\nSSN: 123-45-6789\nTax return wages: $95,000\nW2 wages: $98,000\nLoan requested: $350,000\n"
+    }
+  ]
+}

@@ -1,0 +1,194 @@
+{
+  "Comment": "Mortgage application reviewer workflow (S3 -> extraction -> reasoning -> credit bureau stub -> decision -> persist -> SES notify)",
+  "StartAt": "ExtractAndRedact",
+  "States": {
+    "ExtractAndRedact": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ValidateRedactFunctionArn}",
+        "Payload.$": "$"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "OutputPath": "$.Payload",
+      "Next": "ProcessApplications"
+    },
+    "ProcessApplications": {
+      "Type": "Map",
+      "ItemsPath": "$.records",
+      "MaxConcurrency": 10,
+      "Iterator": {
+        "StartAt": "ReasonAndRecommend",
+        "States": {
+          "ReasonAndRecommend": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${ClassifyDraftFunctionArn}",
+              "Payload.$": "$"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ],
+            "OutputPath": "$.Payload",
+            "Next": "FetchCreditScore"
+          },
+          "FetchCreditScore": {
+            "Type": "Task",
+            "Comment": "Represents the Bedrock Agent calling external credit bureau via AgentCore Gateway (stubbed as Lambda).",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${CreditBureauStubFunctionArn}",
+              "Payload": {
+                "ssn_last4.$": "$.entities.ssn_last4",
+                "name.$": "$.entities.name"
+              }
+            },
+            "ResultPath": "$.credit_bureau",
+            "Next": "DecideStatus"
+          },
+          "DecideStatus": {
+            "Type": "Pass",
+            "Parameters": {
+              "application_id.$": "$.application_id",
+              "entities.$": "$.entities",
+              "extracted_text.$": "$.extracted_text",
+              "claimed.$": "$.claimed",
+              "flags.$": "$.flags",
+              "recommendation.$": "$.recommendation",
+              "explanation.$": "$.explanation",
+              "confidence.$": "$.confidence",
+              "credit_score.$": "$.credit_bureau.Payload"
+            },
+            "Next": "NeedsHumanReview?"
+          },
+          "NeedsHumanReview?": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Or": [
+                  {
+                    "Variable": "$.recommendation",
+                    "StringEquals": "HUMAN_REVIEW"
+                  },
+                  {
+                    "Variable": "$.confidence",
+                    "NumericLessThan": 0.8
+                  },
+                  {
+                    "Variable": "$.credit_score",
+                    "NumericLessThan": 580
+                  }
+                ],
+                "Next": "CreateHumanReview"
+              }
+            ],
+            "Default": "PersistAutoResult"
+          },
+          "PersistAutoResult": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${PersistResultFunctionArn}",
+              "Payload": {
+                "application_id.$": "$.application_id",
+                "recommendation.$": "$.recommendation",
+                "confidence.$": "$.confidence",
+                "credit_score.$": "$.credit_score",
+                "flags.$": "$.flags",
+                "explanation.$": "$.explanation",
+                "final_status": "AUTO_COMPLETED",
+                "review_id": null
+              }
+            },
+            "OutputPath": "$.Payload",
+            "Next": "NotifyApplicant"
+          },
+          "CreateHumanReview": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+            "Parameters": {
+              "FunctionName": "${CreateReviewFunctionArn}",
+              "Payload": {
+                "task_token.$": "$$.Task.Token",
+                "feedback.$": "$"
+              }
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ],
+            "Next": "PersistReviewedResult"
+          },
+          "PersistReviewedResult": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${PersistResultFunctionArn}",
+              "Payload.$": "$"
+            },
+            "OutputPath": "$.Payload",
+            "Next": "NotifyApplicant"
+          },
+          "NotifyApplicant": {
+            "Type": "Task",
+            "Comment": "Send an SES email notification to the applicant with their status.",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${NotifyApplicantFunctionArn}",
+              "Payload.$": "$"
+            },
+            "OutputPath": "$.Payload",
+            "End": true
+          }
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "FailWorkflow"
+        }
+      ],
+      "Next": "Success"
+    },
+    "FailWorkflow": {
+      "Type": "Fail",
+      "Error": "MortgageReviewPipelineFailed",
+      "Cause": "Extraction, reasoning, persistence, or notification error"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}

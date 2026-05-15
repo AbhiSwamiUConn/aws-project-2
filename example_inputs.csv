@@ -1,0 +1,3 @@
+application_id,language,name,address,annual_wages_claimed,tax_return_wages,w2_wages,debts_total,home_value,loan_requested,document_text
+app-001,en,Alex Borrower,"55 Elm St, Boston, MA 02110",120000,118000,119500,10000,500000,350000,"Applicant: Alex Borrower SSN: 111-22-3333 Tax return wages: 118000 W2 wages: 119500"
+app-002,en,Taylor Homebuyer,"900 Oak Ave, Austin, TX 78701",85000,85000,84500,5000,420000,300000,"Applicant: Taylor Homebuyer SSN: 222-33-4444 Tax return wages: 85000 W2 wages: 84500"
