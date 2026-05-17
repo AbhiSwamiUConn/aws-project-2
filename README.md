@@ -58,16 +58,16 @@ aws s3 cp {json_or_csv_file} s3://{application_bucket_name}/incoming/{json_or_cs
 
 # Optional: Manual review callback (if workflow creates a human review task)
 # Select the review id from the dynamodb reviews table then:
-aws lambda invoke \\
-  --function-name {submit_review_lambda_function_name} \\
-  --cli-binary-format raw-in-base64-out \\
-  --payload '{
-    "review_id": "insert_id_here",
+aws lambda invoke \\  
+  --function-name {submit_review_lambda_function_name} \\  
+  --cli-binary-format raw-in-base64-out \\  
+  --payload '{  
+    "review_id": "insert_id_here",  
     "decision": "APPROVED",
-    "reviewer": "insert_email_address",
-    "notes": "optional notes"
-  }' \\
-  response.json
+    "reviewer": "insert_email_address",  
+    "notes": "optional notes"  
+  }' \\  
+  response.json  
 
 # Example input files in repo:
 # - example_inputs.csv
