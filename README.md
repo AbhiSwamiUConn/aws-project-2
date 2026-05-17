@@ -47,11 +47,11 @@ Prereqs:
 - Configure AWS credentials (e.g., `aws configure`)
 
 # paste the following into a terminal
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-sam build
-sam deploy
+python3 -m venv venv  
+source venv/bin/activate  
+pip install -r requirements.txt  
+sam build  
+sam deploy 
 
 # Submit application docs for review (demo JSON/CSV)
 aws s3 cp {json_or_csv_file} s3://{application_bucket_name}/incoming/{json_or_csv_file}

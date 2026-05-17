@@ -5,8 +5,8 @@ from botocore.exceptions import ClientError
 
 ses = boto3.client("ses")
 
-FROM_EMAIL = os.environ.get("FROM_EMAIL", "no-reply@example.com")
-DEFAULT_TO_EMAIL = os.environ.get("DEFAULT_TO_EMAIL", "applicant@example.com")
+FROM_EMAIL = os.environ.get("FROM_EMAIL")
+DEFAULT_TO_EMAIL = os.environ.get("DEFAULT_TO_EMAIL")
 
 
 def lambda_handler(event, context):
