@@ -72,3 +72,4 @@ aws lambda invoke \\
 # Example input files in repo:
 # - example_inputs.csv
 # - ex_human_needed.json
+Testing connected repo integration
