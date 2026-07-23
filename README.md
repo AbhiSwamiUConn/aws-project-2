@@ -72,7 +72,3 @@ aws lambda invoke \\
 # Example input files in repo:
 # - example_inputs.csv
 # - ex_human_needed.json
-
-This is an edit to test webhook integration
-This is an edit to showcase webhook integration
-This is a test to see how the lambda handles multiple webhook requests
